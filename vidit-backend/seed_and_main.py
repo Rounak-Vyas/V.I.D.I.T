@@ -1,17 +1,26 @@
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, Integer, Boolean, DateTime
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from datetime import datetime
 
-# Replace with your local Postgres password OR your Supabase URI
-DATABASE_URL = "postgresql://postgres:YOUR_PASSWORD@localhost:5432/vidit_db"
+# Type your actual Supabase password inside the quotes on the password line below:
+db_url = URL.create(
+    drivername="postgresql+psycopg",
+    username="postgres.odqlcieonaxsmgbclcxe",
+    password="Logintovidit@100%",
+    host="aws-1-ap-northeast-2.pooler.supabase.com",
+    port=5432,
+    database="postgres"
+)
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(db_url)
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
-# --- MODELS ---
+# --- DATABASE TABLES ---
 class Student(Base):
     __tablename__ = "students"
     uid = Column(String, primary_key=True, index=True)
@@ -47,7 +56,7 @@ def get_db():
     finally:
         db.close()
 
-# --- AUTO-SEED INITIAL DATA ON STARTUP ---
+# --- SEED INITIAL DATA ON STARTUP ---
 @app.on_event("startup")
 def seed_database():
     db = SessionLocal()
@@ -60,14 +69,12 @@ def seed_database():
         db.add_all(facilities)
 
     if db.query(Student).count() == 0:
-        # Seeding Team IoTronics + Wokwi RFID UIDs
         students = [
             Student(uid="NB25ECE022", usn="NB25ECE022", name="Ananya Manjunath"),
             Student(uid="1NT24EC019", usn="1NT24EC019", name="Amogh D Pinglay"),
             Student(uid="NB25RAI034", usn="NB25RAI034", name="Meher Chaitanya"),
             Student(uid="NB25ECE170", usn="NB25ECE170", name="Shreya Fouzdar"),
             Student(uid="1NT23EE045", usn="1NT23EE045", name="Rounak Vyas"),
-            # Default Wokwi MFRC522 simulated card UID (update if yours prints a different hex)
             Student(uid="01020304", usn="1NT24EC019", name="Amogh (RFID Card)"),
         ]
         db.add_all(students)
@@ -114,3 +121,17 @@ def process_scan(payload: ScanPayload, db: Session = Depends(get_db)):
         "live_occupancy": facility.current_occupancy,
         "available_capacity": facility.max_capacity - facility.current_occupancy
     }
+
+@app.get("/api/com/status")
+def get_occupancy_status(db: Session = Depends(get_db)):
+    facilities = db.query(Facility).all()
+    return [
+        {
+            "facility": f.name,
+            "current": f.current_occupancy,
+            "max": f.max_capacity,
+            "available": f.max_capacity - f.current_occupancy,
+            "status": "Near Full" if f.current_occupancy / f.max_capacity > 0.8 else "Available"
+        }
+        for f in facilities
+    ]

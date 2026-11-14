@@ -4,6 +4,9 @@ from sqlalchemy import create_engine, Column, String, Integer, Boolean, DateTime
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from datetime import datetime
+import joblib
+import numpy as np
+import pandas as pd
 
 # Type your actual Supabase password inside the quotes on the password line below:
 db_url = URL.create(
@@ -135,3 +138,45 @@ def get_occupancy_status(db: Session = Depends(get_db)):
         }
         for f in facilities
     ]
+
+# --- MESS INTELLIGENCE MODEL (MIM) PREDICTION ENDPOINT ---
+
+mim_model = joblib.load("mim_model.pkl")
+
+@app.get("/api/mim/predict")
+def predict_mess_crowd(
+    meal: int = 2,          # 0: Breakfast, 1: Lunch, 2: Dinner
+    day_of_week: int = 4,   # 0: Mon ... 4: Fri ... 6: Sun
+    exam_period: int = 1,   # 0: Normal, 1: Midsems/Exams
+    is_holiday: int = 0,    # 0: No, 1: Yes
+    special_meal: int = 0,  # 0: No, 1: Yes
+    weather_rain: int = 1,  # 0: Clear, 1: Rain
+    db: Session = Depends(get_db)
+):
+    # 1. Fetch live campus occupancy from Supabase
+    campus = db.query(Facility).filter(Facility.name == "CAMPUS_MAIN").first()
+    live_occupancy = campus.current_occupancy if campus else 250
+
+    # 2. Run input features through the trained Random Forest model
+    features = ["meal", "day_of_week", "exam_period", "is_holiday", "special_meal", "weather_rain"]
+    input_df = pd.DataFrame([[meal, day_of_week, exam_period, is_holiday, special_meal, weather_rain]], columns=features)
+    
+    tree_preds = np.array([tree.predict(input_df.values)[0] for tree in mim_model.estimators_])
+    attendance_factor = round(float(np.mean(tree_preds)), 2)
+    confidence_margin = round(float(1.96 * np.std(tree_preds)), 2)
+
+    # 3. Calculate expected turnout and preparation range
+    expected_students = int(round(live_occupancy * attendance_factor))
+    min_range = int(round(live_occupancy * max(0.0, attendance_factor - confidence_margin)))
+    max_range = int(round(live_occupancy * min(1.0, attendance_factor + confidence_margin)))
+
+    meal_names = {0: "Breakfast", 1: "Lunch", 2: "Dinner"}
+
+    return {
+        "meal": meal_names.get(meal, "Unknown"),
+        "live_campus_occupancy": live_occupancy,
+        "attendance_factor": attendance_factor,
+        "confidence_margin": f"+/- {confidence_margin}",
+        "expected_mess_turnout": expected_students,
+        "preparation_range": f"{min_range} - {max_range}"
+    }

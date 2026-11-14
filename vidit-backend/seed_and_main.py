@@ -7,6 +7,7 @@ from datetime import datetime
 import joblib
 import numpy as np
 import pandas as pd
+from fastapi.middleware.cors import CORSMiddleware
 
 # Type your actual Supabase password inside the quotes on the password line below:
 db_url = URL.create(
@@ -51,6 +52,14 @@ class Facility(Base):
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="V.I.D.I.T Prototype Backend")
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def get_db():
     db = SessionLocal()
